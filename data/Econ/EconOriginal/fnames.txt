@@ -1,0 +1,6 @@
+Food&Beverage.csv
+GDP.csv
+Income.csv
+LoanRate.csv
+Meat.csv
+MedicalCare.csv
