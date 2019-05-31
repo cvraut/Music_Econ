@@ -1,0 +1,84 @@
+---
+title: "nrc_econ_bayesian"
+author: "Henry Ye    21212176"
+date: "5/31/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(R2jags)
+library(robustHD)
+library(ggplot2)
+library(gridExtra)
+library(mnormt)
+```
+
+```{r}
+nrc <- read.csv("../data/nrc_econ_cat.csv")
+attach(nrc)
+```
+
+
+```{r}
+econ <-  GDP_detrended
+qqnorm(econ[!is.na(econ)], main="LDL1 Q-Q Plot"); qqline(econ, col="red")
+```
+
+
+```{r, results="hide"}
+emotion_econ <- function(target, p) 
+{
+  sink("NUL")
+  options(warn=-1)
+  model_reg.1 <- "model {
+  for(i in 1:n) {
+    Y[i] ~ dnorm(mu[i], tau)
+    mu[i] <- (beta[1] + beta[2] * Xmat[i, 2] + beta[3] * Xmat[i, 3] + beta[4] * Xmat[i, 4] + beta[5] * Xmat[i, 5] + beta[6] * Xmat[i, 6] + beta[7] * Xmat[i, 7] + beta[8] * Xmat[i, 8] + beta[9] * Xmat[i, 9] + beta[10] * Xmat[i, 10] + beta[11] * Xmat[i, 11])
+    CPOinv[i] <- sqrt(2*3.14159/tau)*exp(0.5*tau*pow(Y[i]-mu[i],2))
+  }
+  beta[1:r] ~ dmnorm(beta0[1:r], (tau/gg)*C0inv[1:r, 1:r])
+  tau ~ dgamma(a, b)
+  }
+  "
+  p = 1
+  Y = target[!is.na(target)]
+  temp = nrc[which(!is.na(target)) - p, ]
+  detach(nrc)
+  attach(temp)
+  Xmat <- model.matrix(~trust_prop_detrended + anger_prop_detrended + fear_prop_detrended + negative_prop_detrended + sadness_prop_detrended + surprise_prop_detrended + positive_prop_detrended + disgust_prop_detrended + joy_prop_detrended + anticipation_prop_detrended)
+  detach(temp)
+  attach(nrc)
+  
+  C0inv <- t(Xmat) %*% Xmat
+  jags.data = list (
+    Y = Y, Xmat = Xmat,
+    beta0 = rep(0, dim(Xmat.1)[2]), C0inv = C0inv,
+    a=0.001, b=0.001, gg = length(Y), n = length(Y), r = dim(Xmat)[2]
+  )
+  jags.param <- c("beta", "tau", "CPOinv")
+  jags.fit1 <- jags(data=jags.data, parameters.to.save=jags.param,
+                   model.file=textConnection(model_reg.1), n.iter=5000, n.chains=1,
+                   n.burnin = 800, n.thin = 1, DIC=T)
+  pm_tau=jags.fit1$BUGSoutput$summary["tau", "mean"]
+  b=jags.fit1$BUGSoutput$summary[c("beta[1]", "beta[2]", "beta[3]", "beta[4]", "beta[5]", "beta[6]", "beta[7]", "beta[8]", "beta[9]", "beta[10]", "beta[11]"), "mean"]
+  betas <- rbind(b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11])
+  N = length(Y.1)
+  BIC <- -N*log(pm_tau) + N*log(2*pi) + pm_tau*sum((Y-Xmat%*%betas)^2) + (dim(Xmat)[2]+1)*log(N) 
+  
+  CPO1 <- 1/jags.fit1$BUGSoutput$mean$CPOinv
+  LPML <- sum(log(CPO1))
+  
+  s1 <- c(jags.fit1$BUGSoutput$DIC, BIC, LPML)
+  names(s1) <- c("DIC", "BIC", "LPML")
+  return(s1)
+}
+  
+```
+
+```{r}
+emotion_econ(GDP_detrended, 1)
+```
+
+
+
