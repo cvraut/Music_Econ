@@ -104,7 +104,7 @@ burn = 800, nmc = 8000, thin = 1, alpha=0.05)
 for(cat in 1:length(target_values))
 {
   print(target_values[cat])
-  model.horseshoe <- econ_emotion(target_values[cat], 12)
+  model.horseshoe <- econ_emotion(target_values[1], 3)
 }
 ```
 
@@ -113,7 +113,6 @@ for(cat in 1:length(target_values))
 ```{r}
 econ_nrc_rjags <- function(target_name, overall_lag)
 {
-  
   selected_nrc <- nrc[complete.cases(nrc[match(c(nrc$MonthID - overall_lag), c(nrc$MonthID)), ]), ]
   time_span <- selected_nrc$MonthID
   time_span <- time_span[!is.na(time_span)]
@@ -128,10 +127,10 @@ econ_nrc_rjags <- function(target_name, overall_lag)
   }
   selected_nrc <- selected_nrc[complete.cases(selected_nrc), ]
   Y = selected_nrc[, which(colnames(selected_nrc) == target_name)]
-  X_names = c()
+  X_names = c(); cat_label <- c(0)
   for(i in 1:length(econ_detrended_names)) 
     for(j in 1:overall_lag) 
-      {X_names <- c(X_names, sprintf("%s_%i", econ_detrended_names[i], j))}
+      {X_names <- c(X_names, sprintf("%s_%i", econ_detrended_names[i], j)); cat_label <- c(cat_label, i)}
 
   Xmat_temp <- selected_nrc[, match(X_names, colnames(selected_nrc))]
   Xmat_temp = cbind(rep(1, dim(Xmat_temp)[1]), Xmat_temp)
@@ -143,25 +142,40 @@ econ_nrc_rjags <- function(target_name, overall_lag)
     for(i in 1:n) {
       Y[i] ~ dnorm(mu[i], tau)
       mu[i] <- beta %*% Xmat[i, ]
-      CPOinv[i] <- sqrt(2*3.14159/tau)*exp(0.5*tau*pow(Y[i]-mu[i],2))
     }
-    beta[1:r] ~ dmnorm(beta0[1:r], (tau/gg)*C0inv[1:r, 1:r])
-    tau ~ dgamma(a, b)
+    for(j in 1:p) {
+        beta[j] ~ dnorm(mu_econ[cat_label[j] + 1], tau.b)
+    } 
+    for(i in 1:num_econ) {
+      mu_econ[i] ~ dnorm(0, (tau**2 * (abs(lambda[i]) + 0.0005) ** 2) * (abs(tau.me) + 0.0005) ** 2)
+      lambda[i] ~ dt(0,1,1)
+    }
+      tau ~ dgamma(0.001, 0.001)
+      tau.b ~ dgamma(0.1, 0.1)  
+      tau.me ~ dgamma(0.1, 0.1)
     }
     "
     C0inv <- t(Xmat) %*% Xmat
     jags.data = list (
-      Y = standardize(Y), Xmat = Xmat,
-      beta0 = rep(0, dim(Xmat)[2]), C0inv = C0inv,
-      a=0.001, b=0.001, gg = length(Y), n = length(Y), r = dim(Xmat)[2]
+      Y = Y, Xmat = Xmat, n = length(Y), cat_label = cat_label, 
+      num_econ = length(unique(cat_label)) + 1, p = dim(Xmat)[2]
     )
-    jags.param <- c("beta", "tau", "CPOinv")
+    jags.param <- c("beta", "mu_econ")
     jags.fit1 <- jags(data=jags.data, parameters.to.save=jags.param,
-                     model.file=textConnection(model_reg.1), n.iter=20000, n.chains=1,
-                     n.burnin = 8000, n.thin = 1, DIC=T)
+                     model.file=textConnection(model_reg.1), n.iter=8000, n.chains=1,
+                     n.burnin = 800, n.thin = 1, DIC=T)
+    post.step.music_econ <- apply(jags.fit1$BUGSoutput$sims.list$mu_econ, 2, function(a){sum(a>0)/length(a)})
+    post.step.beta <- apply(jags.fit1$BUGSoutput$sims.list$beta, 2, function(a){sum(a>0)/length(a)})
+    for(i in 1:length(post.step.music_econ))
+       print(sprintf("%s %s",c("Intercept", econ_detrended_names)[i], post.step.music_econ[i]))
+    print("\n")
+    for(i in 1:length(colnames(Xmat)))
+      print(sprintf("%s %s",colnames(Xmat)[i], post.step.beta[i]))
+    return(jags.fit1)
 }
 
-econ_nrc_rjags(target_values[0], 12)
+jags.fit1 <- econ_nrc_rjags(target_values[1], 12)
+
 ```
 
 
