@@ -122,9 +122,14 @@ check_normality(6, econ_original_names, "cat0_avg")
 ```
 
 
+<<<<<<< HEAD
 ## Simple Bayesian Linear Regression with Horseshoe Prior
 ```{r}
 simple_bayesian <- function(overall_lag, econ_features, target_name) 
+=======
+```{r}
+econ_emotion <- function(overall_lag, econ_features, target_name) 
+>>>>>>> 64c71abba0e61be1d0389dd8736094f28202f617
 {
   temp <- simple_Xmat(overall_lag, econ_features, target_name)
   Y <- temp$Y; Xmat <- temp$Xmat
@@ -162,14 +167,24 @@ simple_bayesian <- function(overall_lag, econ_features, target_name)
 for(cat in 1:length(target_values))
 {
   print(target_values[cat])
+<<<<<<< HEAD
   model.horseshoe <- simple_bayesian(3, econ_detrended_names, target_values[cat])
+=======
+  model.horseshoe <- econ_emotion(3, econ_detrended_names, target_values[cat])
+>>>>>>> 64c71abba0e61be1d0389dd8736094f28202f617
 }
 ```
 
 
+<<<<<<< HEAD
 ## Bayesian Hierarchical Linear Regression with Horseshoe Prior
 ```{r}
 hierarchical_bayesian <- function(overall_lag, econ_features, target_name) 
+=======
+
+```{r}
+econ_nrc_rjags <- function(overall_lag, econ_features, target_name) 
+>>>>>>> 64c71abba0e61be1d0389dd8736094f28202f617
 {
   temp <- hierarchical_Xmat(overall_lag, econ_features, target_name)
   Y <- temp$Y; Xmat <- temp$Xmat
@@ -242,6 +257,10 @@ hierarchical_bayesian <- function(overall_lag, econ_features, target_name)
 
 ```{r}
 
+<<<<<<< HEAD
 models <- hierarchical_bayesian(6, econ_detrended_names, target_values[5])
+=======
+models <- econ_nrc_rjags(6, econ_detrended_names, target_values[5])
+>>>>>>> 64c71abba0e61be1d0389dd8736094f28202f617
 ```
 
