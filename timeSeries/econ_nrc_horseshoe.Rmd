@@ -1,5 +1,5 @@
 ---
-title: "econ_nrc_bayesian"
+title: "Econ Topics Bayesian"
 author: "Henry Ye    21212176"
 date: "5/31/2019"
 output:
@@ -18,29 +18,32 @@ library(horseshoe)
 library(knitr)
 ```
 
-## Load Data
 ```{r}
 econ <- read.csv("../data/Econ/EconOriginal/econ_master.csv")
 econ <- econ[, -1]
-lda <- read.csv("../data/lda_monthly_cat.csv")
-lda <- lda[, -1]
+nrc <- read.csv("../data/nrc_monthly_cat.csv")
+nrc <- nrc[, -1]
+
 econ_names <- colnames(econ)[3:12]
 econ_original_names <- colnames(econ)[c(3,5,7,9,11)]
 econ_original_names
 econ_detrended_names <- colnames(econ)[c(4,6,8,10,12)]
 econ_detrended_names
-target_values_detrended <- colnames(lda)[13:23]
+
+target_values_detrended <- colnames(nrc)[25:34]
 target_values_detrended
-target_values <- colnames(lda)[2:12]
+
+target_values <- colnames(nrc)[2:11]
 target_values
 ```
+
 
 ## Simple (Bayesian) Linear Regression Xmat construction
 ```{r}
 simple_Xmat <- function(overall_lag, econ_features, target_name)
 {
-  selected_lda <- lda[complete.cases(lda[match(c(lda$MonthID - overall_lag), c(lda$MonthID)), ]), ]
-  time_span <- selected_lda$MonthID
+  selected_nrc <- nrc[complete.cases(nrc[match(c(nrc$MonthID - overall_lag), c(nrc$MonthID)), ]), ]
+  time_span <- selected_nrc$MonthID
   time_span <- time_span[!is.na(time_span)]
 
   for (p in overall_lag:1) {
@@ -49,17 +52,17 @@ simple_Xmat <- function(overall_lag, econ_features, target_name)
     econ_temp <- econ_temp[, -which(colnames(econ_temp) == "DATE")]
     econ_temp <- econ_temp[, c(match(econ_features, colnames(econ_temp)), 1)]
     colnames(econ_temp) <- lapply(colnames(econ_temp), function(x){if (x != "MonthID") sprintf("%s_%i", x, p) else x})
-    selected_lda <-merge(selected_lda, econ_temp, by = "MonthID")
+    selected_nrc <-merge(selected_nrc, econ_temp, by = "MonthID")
   }
-  selected_lda <- selected_lda[complete.cases(selected_lda), ]
-  Y = selected_lda[, which(colnames(selected_lda) == target_name)]
+  selected_nrc <- selected_nrc[complete.cases(selected_nrc), ]
+  Y = selected_nrc[, which(colnames(selected_nrc) == target_name)]
 
   X_names = c()
   for(i in 1:length(econ_features)) 
     for(j in 1:overall_lag) 
       {X_names <- c(X_names, sprintf("%s_%i", econ_features[i], j))}
 
-  Xmat_temp <- selected_lda[, match(X_names, colnames(selected_lda))]
+  Xmat_temp <- selected_nrc[, match(X_names, colnames(selected_nrc))]
   Xmat_temp = cbind(rep(1, dim(Xmat_temp)[1]), Xmat_temp)
   colnames(Xmat_temp)[1] = "Intercept"
   Xmat <- as.matrix(Xmat_temp)
@@ -70,7 +73,7 @@ simple_Xmat <- function(overall_lag, econ_features, target_name)
 
 
 ```{r}
-valList <- simple_Xmat(6, econ_original_names, "cat0_avg")
+valList <- simple_Xmat(6, econ_original_names, "negative_prop")
 Xmat <- valList$Xmat
 head(Xmat)
 ```
@@ -81,7 +84,7 @@ head(Xmat)
 hierarchical_Xmat <- function(overall_lag, econ_features, target_name)
 {
   temp <- simple_Xmat(overall_lag, econ_features, target_name)
-  selected_lda <- temp$Xmat
+  selected_nrc <- temp$Xmat
   Y <- temp$Y
   
   Xmat = array(0, c(length(econ_features), length(Y), overall_lag + 1))
@@ -90,7 +93,7 @@ hierarchical_Xmat <- function(overall_lag, econ_features, target_name)
   {
     for(j in 1:overall_lag) 
         {X_names <- c(X_names, sprintf("%s_%i", econ_features[i], j));}
-    Xmat_temp <- selected_lda[, match(X_names, colnames(selected_lda))]
+    Xmat_temp <- selected_nrc[, match(X_names, colnames(selected_nrc))]
     Xmat_temp = cbind(rep(1, dim(Xmat_temp)[1]), Xmat_temp)
     colnames(Xmat_temp)[1] = "Intercept"
     Xmat[i,,] <- as.matrix(Xmat_temp)
@@ -102,7 +105,7 @@ hierarchical_Xmat <- function(overall_lag, econ_features, target_name)
 ```
 
 ```{r}
-valList <- hierarchical_Xmat(6, econ_detrended_names, "cat0_avg")
+valList <- hierarchical_Xmat(6, econ_detrended_names, "negative_prop")
 Xmat <- valList$Xmat
 ## S.P
 head(Xmat[1,,])
@@ -118,7 +121,7 @@ check_normality <- function(overall_lag, econ_features, target_name)
   lr <- lm(Y ~ Xmat)
   plot(lr)
 }
-check_normality(6, econ_original_names, "cat0_avg")
+check_normality(6, econ_original_names, "negative_prop")
 ```
 
 
@@ -204,8 +207,8 @@ hierarchical_bayesian <- function(overall_lag, econ_features, target_name)
     )
     jags.param <- c("beta", "beta_featured", "mu_f", "mu")
     jags.fit1 <- jags(data=jags.data, parameters.to.save=jags.param,
-                     model.file=textConnection(model_reg.1), n.iter=20000, n.chains=1,
-                     n.burnin = 8000, n.thin = 1, DIC=T)
+                     model.file=textConnection(model_reg.1), n.iter=8000, n.chains=1,
+                     n.burnin = 1000, n.thin = 1, DIC=T)
     post.beta.mean <- jags.fit1$BUGSoutput$mean$beta
     post.step.beta <- apply(jags.fit1$BUGSoutput$sims.list$beta, 2, function(a){sum(a>0)/length(a)})
     
@@ -243,6 +246,7 @@ hierarchical_bayesian <- function(overall_lag, econ_features, target_name)
 ```{r}
 models <- hierarchical_bayesian(6, econ_detrended_names, target_values[5])
 ```
+
 
 ```{r}
 traceplot(models)
