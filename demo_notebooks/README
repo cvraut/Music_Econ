@@ -1,0 +1,6 @@
+This is an organized subfolder in our giant mess of a github repo for our capstone project
+
+There are 3 notebooks contained in the notebooks directory each representing a chunk of the project:
+ - Data Scraping and Collection
+ - Latent Dirichlet Allocation Clustering
+ - Bayesian Linear Regression using the horseshoe prior
