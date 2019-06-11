@@ -1,0 +1,253 @@
+---
+title: "econ_nrc_bayesian"
+author: "Henry Ye    21212176"
+date: "5/31/2019"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(R2jags)
+library(robustHD)
+library(ggplot2)
+library(gridExtra)
+library(car)
+library(horseshoe)
+library(knitr)
+```
+
+## Load Data
+```{r}
+econ <- read.csv("../data/econ_master.csv")
+econ <- econ[, -1]
+lda <- read.csv("../data/lda_monthly_cat.csv")
+lda <- lda[, -1]
+econ_names <- colnames(econ)[3:12]
+econ_original_names <- colnames(econ)[c(3,5,7,9,11)]
+econ_original_names
+econ_detrended_names <- colnames(econ)[c(4,6,8,10,12)]
+econ_detrended_names
+target_values_detrended <- colnames(lda)[13:23]
+target_values_detrended
+target_values <- colnames(lda)[2:12]
+target_values
+```
+
+## Simple (Bayesian) Linear Regression Xmat construction
+```{r}
+simple_Xmat <- function(overall_lag, econ_features, target_name)
+{
+  selected_lda <- lda[complete.cases(lda[match(c(lda$MonthID - overall_lag), c(lda$MonthID)), ]), ]
+  time_span <- selected_lda$MonthID
+  time_span <- time_span[!is.na(time_span)]
+
+  for (p in overall_lag:1) {
+    econ_temp <- econ[complete.cases(econ[match(c(econ$MonthID+p), c(econ$MonthID)), ]), ]
+    econ_temp$MonthID <- econ_temp$MonthID + p
+    econ_temp <- econ_temp[, -which(colnames(econ_temp) == "DATE")]
+    econ_temp <- econ_temp[, c(match(econ_features, colnames(econ_temp)), 1)]
+    colnames(econ_temp) <- lapply(colnames(econ_temp), function(x){if (x != "MonthID") sprintf("%s_%i", x, p) else x})
+    selected_lda <-merge(selected_lda, econ_temp, by = "MonthID")
+  }
+  selected_lda <- selected_lda[complete.cases(selected_lda), ]
+  Y = selected_lda[, which(colnames(selected_lda) == target_name)]
+
+  X_names = c()
+  for(i in 1:length(econ_features)) 
+    for(j in 1:overall_lag) 
+      {X_names <- c(X_names, sprintf("%s_%i", econ_features[i], j))}
+
+  Xmat_temp <- selected_lda[, match(X_names, colnames(selected_lda))]
+  Xmat_temp = cbind(rep(1, dim(Xmat_temp)[1]), Xmat_temp)
+  colnames(Xmat_temp)[1] = "Intercept"
+  Xmat <- as.matrix(Xmat_temp)
+  toRet <- list("Y" = Y, "Xmat" = Xmat)
+  return(toRet)
+}
+```
+
+
+```{r}
+valList <- simple_Xmat(6, econ_original_names, "cat0_avg")
+Xmat <- valList$Xmat
+head(Xmat)
+```
+
+
+## Hierarchical Xmat construction
+```{r}
+hierarchical_Xmat <- function(overall_lag, econ_features, target_name)
+{
+  temp <- simple_Xmat(overall_lag, econ_features, target_name)
+  selected_lda <- temp$Xmat
+  Y <- temp$Y
+  
+  Xmat = array(0, c(length(econ_features), length(Y), overall_lag + 1))
+  X_names = c()
+  for(i in 1:length(econ_features)) 
+  {
+    for(j in 1:overall_lag) 
+        {X_names <- c(X_names, sprintf("%s_%i", econ_features[i], j));}
+    Xmat_temp <- selected_lda[, match(X_names, colnames(selected_lda))]
+    Xmat_temp = cbind(rep(1, dim(Xmat_temp)[1]), Xmat_temp)
+    colnames(Xmat_temp)[1] = "Intercept"
+    Xmat[i,,] <- as.matrix(Xmat_temp)
+    X_names = c()
+  }
+  toRet <- list("Y" = Y, "Xmat" = Xmat)
+  return(toRet) 
+}
+```
+
+```{r}
+valList <- hierarchical_Xmat(6, econ_detrended_names, "cat0_avg")
+Xmat <- valList$Xmat
+## S.P
+head(Xmat[1,,])
+```
+
+## Check Residual Normality using simple linear regression
+```{r}
+check_normality <- function(overall_lag, econ_features, target_name)
+{
+  temp <- simple_Xmat(overall_lag, econ_features, target_name)
+  Y = temp$Y; Xmat = temp$Xmat
+ # lr <- lm(logit((Y+1)/2) ~ Xmat)
+  lr <- lm(Y ~ Xmat)
+  plot(lr)
+}
+check_normality(6, econ_original_names, "cat0_avg")
+```
+
+
+## Simple Bayesian Linear Regression with Horseshoe Prior
+```{r}
+simple_bayesian <- function(overall_lag, econ_features, target_name) 
+{
+  temp <- simple_Xmat(overall_lag, econ_features, target_name)
+  Y <- temp$Y; Xmat <- temp$Xmat
+  
+  Y <- logit(Y)
+  
+  print(dim(Xmat)[1])
+  
+  model.horseshoe = horseshoe(Y, as.matrix(Xmat), method.tau = "truncatedCauchy", method.sigma = "Jeffreys",
+                              burn = 800, nmc = 8000, thin = 1, alpha=0.05)
+
+  betas <- apply(model.horseshoe$BetaSamples, 1, mean)
+  pm_tau <- mean(model.horseshoe$TauHat)
+  N = length(Y)
+  BIC <- -N*log(pm_tau) + N*log(2*pi) + pm_tau*sum((Y-Xmat%*%betas)^2) + (dim(Xmat)[2]+1)*log(N) 
+  print(BIC)
+  
+  n=dim(Xmat)[2]; prefix="beta"; suffix=seq(1:n); index=paste(prefix, suffix, sep=".") 
+  quantile.horseshoe=t(apply(model.horseshoe$BetaSamples, 1, quantile, prob=c(0.025, 0.5, 0.975))) 
+  post.mean.horseshoe=apply(model.horseshoe$BetaSamples, 1, mean) 
+  post.step = apply(model.horseshoe$BetaSamples, 1, function(x){sum(x>0) / length(x)})
+  post.summary.horseshoe=cbind(colnames(Xmat), post.mean.horseshoe, post.step) 
+ # print(kable(post.summary.horseshoe))
+  results.summary <- cbind(colnames(Xmat)[abs(post.step - 0.5) > 0.45], post.mean.horseshoe[abs(post.step - 0.5) > 0.45], post.step[abs(post.step - 0.5) > 0.45])
+  colnames(results.summary) <- c("betas", "mean", "step")
+  print(kable(results.summary))
+  #print(colnames(Xmat)[abs(post.step - 0.5) > 0.2])
+  #print(post.step[abs(post.step - 0.5) > 0.2])
+  #print(post.mean.horseshoe[abs(post.step - 0.5) > 0.2])
+  return(model.horseshoe)
+}
+```
+
+```{r}
+for(cat in 1:length(target_values))
+{
+  print(target_values[cat])
+  model.horseshoe <- simple_bayesian(3, econ_detrended_names, target_values[cat])
+}
+```
+
+
+## Bayesian Hierarchical Linear Regression with Horseshoe Prior
+```{r}
+hierarchical_bayesian <- function(overall_lag, econ_features, target_name) 
+{
+  temp <- hierarchical_Xmat(overall_lag, econ_features, target_name)
+  Y <- temp$Y; Xmat <- temp$Xmat
+  
+  Y <- logit(Y)
+    
+  model_reg.1 <- "model {
+    for(i in 1:n) {
+      Y[i] ~ dnorm(mu[i], tau)
+      mu[i] <- beta %*% econ_featured[i,]
+      for(j in 1:numEcon) {
+        econ_featured[i,j] ~ dnorm(mu_f[i, j], tau_f[j])
+        mu_f[i, j] = beta_featured[j, ] %*% Xmat[j,i,]
+      }
+    }
+    for(j in 1:numEcon) {
+      for(t in 1:timelag) {
+          beta_featured[j, t] ~ dnorm(0, (tau_f[j]**2 * (abs(lambda.b[j, t]) + 0.0005) ** 2) * (abs(tau_bf[j]) + 0.0005) ** 2)
+          lambda.b[j, t] ~ dt(0,1,1)
+      }
+      tau_f[j] ~ dgamma(0.01, 0.01)
+      tau_bf[j] ~ dt(0,1,1)
+      beta[j] ~ dnorm(0, tau**2 * (abs(lambda[j]) + 0.0005) **2 * (abs(tau_b) + 0.0005) ** 2)
+      lambda[j] ~ dt(0, 1, 1)
+    }
+    tau ~ dgamma(0.001, 0.001)
+    tau_b ~ dt(0, 1, 1)
+  }
+    "
+    jags.data = list (
+      Y = Y, Xmat = Xmat, n = length(Y), numEcon = 5, timelag = overall_lag + 1
+    )
+    jags.param <- c("beta", "beta_featured", "mu_f", "mu")
+    jags.fit1 <- jags(data=jags.data, parameters.to.save=jags.param,
+                     model.file=textConnection(model_reg.1), n.iter=20000, n.chains=1,
+                     n.burnin = 8000, n.thin = 1, DIC=T)
+    post.beta.mean <- jags.fit1$BUGSoutput$mean$beta
+    post.step.beta <- apply(jags.fit1$BUGSoutput$sims.list$beta, 2, function(a){sum(a>0)/length(a)})
+    
+    beta_names = c(); step_results = c(); mean_results = c()
+    for (i in 1:5) {
+      if(abs(post.step.beta[i] - 0.5) > 0.45)
+      {
+         beta_names <- c(beta_names, econ_features[i])
+         step_results <- c(step_results, post.step.beta[i])
+        mean_results <- c(mean_results, post.beta.mean[i])
+      }
+    }
+
+    for(i in 1:5)
+    {
+      for(t in 1:(overall_lag+1))
+      {
+        curr = jags.fit1$BUGSoutput$sims.list$beta_featured[, i, t]
+        prop = sum(curr > 0) / length(curr)
+        if(abs(prop - 0.5) > 0.45) {
+          beta_names <- c(beta_names, sprintf("%s %d", econ_features[i], t-1))
+          step_results <- c(step_results, prop)
+          mean_results <- c(mean_results, mean(curr))
+        }
+      }
+    }
+    length(mean_results)
+    results.summary <- cbind(beta_names, mean_results, step_results)
+    colnames(results.summary) <- c("betas", "mean", "step")
+    print(kable(results.summary))
+    return(jags.fit1$BUGSoutput)
+}
+```
+
+```{r}
+models <- hierarchical_bayesian(3, econ_detrended_names, target_values[5])
+```
+
+```{r}
+#traceplot(models)
+```
+
+
+
